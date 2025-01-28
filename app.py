@@ -1,42 +1,45 @@
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 import cv2
 import numpy as np
-from keras.models import load_model
+from tensorflow.keras.models import load_model
 import base64
-import os
 
-app = Flask(__name__)
+# Inicializar la aplicación
+app = FastAPI()
 
 # Cargar los clasificadores Haar Cascade
-face_detection = cv2.CascadeClassifier('/home/lemi/Documentos/detection-sleep/haar/haarcascade_frontalface_alt.xml')
-left_eye_detection = cv2.CascadeClassifier('/home/lemi/Documentos/detection-sleep/haar/haarcascade_lefteye_2splits.xml')
-right_eye_detection = cv2.CascadeClassifier('/home/lemi/Documentos/detection-sleep/haar/haarcascade_righteye_2splits.xml')
+face_detection = cv2.CascadeClassifier('haar/haarcascade_frontalface_alt.xml')
+left_eye_detection = cv2.CascadeClassifier('haar/haarcascade_lefteye_2splits.xml')
+right_eye_detection = cv2.CascadeClassifier('haar/haarcascade_righteye_2splits.xml')
 
 # Cargar el modelo de ML
-model = load_model('/home/lemi/Documentos/detection-sleep/modelos/sleep_model.h5')
+model = load_model('modelos/sleep_model.h5')
+
+# Modelo de entrada para FastAPI
+class FrameData(BaseModel):
+    frame: str  # Base64 string del fotograma
 
 def process_eye(eye_frame):
     """Procesa la imagen del ojo y hace la predicción"""
     eye = cv2.cvtColor(eye_frame, cv2.COLOR_BGR2GRAY)
     eye = cv2.resize(eye, (24, 24))
-    eye = eye/255
+    eye = eye / 255.0
     eye = eye.reshape(24, 24, -1)
     eye = np.expand_dims(eye, axis=0)
-    prediction = model.predict_classes(eye)
-    return prediction[0]
+    prediction = model.predict(eye)
+    return np.argmax(prediction, axis=1)[0]
 
-@app.route('/api/detect_drowsiness', methods=['POST'])
-def detect_drowsiness():
+@app.post("/api/detect_drowsiness_live")
+async def detect_drowsiness_live(data: FrameData):
     try:
-        # Recibir la imagen en base64
-        image_data = request.json.get('image')
-        if not image_data:
-            return jsonify({'error': 'No image data provided'}), 400
-
-        # Decodificar la imagen
-        image_bytes = base64.b64decode(image_data)
-        nparr = np.frombuffer(image_bytes, np.uint8)
+        # Decodificar el fotograma
+        frame_bytes = base64.b64decode(data.frame)
+        nparr = np.frombuffer(frame_bytes, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if frame is None:
+            raise HTTPException(status_code=400, detail="Invalid frame data")
 
         # Convertir a escala de grises
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -93,19 +96,11 @@ def detect_drowsiness():
                 'is_active': is_active
             })
 
-        return jsonify({
+        return {
             'status': 'success',
             'faces_detected': len(results),
             'results': results
-        })
+        }
 
     except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-if __name__ == '__main__':
-    app.run(debug=True)
-
-
+        raise HTTPException(status_code=500, detail=str(e))
