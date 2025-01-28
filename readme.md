@@ -17,7 +17,7 @@ git clone https://github.com/tu-usuario/sleep_detection.git
 cd sleep_detection
 ```
 
-1. Crear un entorno virtual (recomendado):
+2. Crear un entorno virtual y entrar en el  (recomendado):
 
 ```bash
 python -m venv venv
@@ -27,7 +27,17 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-1. Instalar las dependencias:
+```bash
+source venv/Scripts/activate
+```
+
+//Para desactivar:
+
+```bash
+deactivate
+```
+
+3. Instalar las dependencias:
 
 ```bash
 pip install -r requirements.txt
@@ -35,13 +45,13 @@ pip install -r requirements.txt
 
 ## Ejecución
 
-1. Iniciar el servidor:
+4. Iniciar el servidor:
 
 ```bash
 uvicorn modelo:app --reload
 ```
 
-2. Acceder al cliente y ejecutar.
+5. Acceder al cliente y ejecutar.
 
 ## Características
 
