@@ -1,93 +1,212 @@
-# procesar el video
-# detectar el rostro
-# analizamos el ojo derecho y el ojo izquierdo
-# se predice si el ojo esta abierto o cerrado
-# aanalizamos la somnolencia del conductor
-# bajo la toma de decicion de somnolencia y sus ojos
-# se envia la señal de alerta
-
+import logging
 import cv2
 import numpy as np
-import base64
-import os
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras.models import load_model
+import asyncio
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import mediapipe as mp
+from typing import Dict, Optional, Tuple
+import time
+import json
 
 
-face_detection = cv2.CascadeClassifier('haar\haarcascade_frontalface_alt.xml')
-eyes_left_detection = cv2.CascadeClassifier('haar\haarcascade_lefteye_2splits.xml')
-eyes_right_detection = cv2.CascadeClassifier('haar\haarcascade_righteye_2splits.xml')
-captura = cv2.VideoCapture(0)
+# Inicializar la aplicación FastAPI
+app = FastAPI()
 
-model = load_model('modelos\sleep_model_g.h5')
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-try:
-    while True:
-        ret, frame = captura.read()
-        alto, ancho = frame.shape[:2]
+# Inicializar MediaPipe Face Mesh
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(
+    max_num_faces=1,
+    refine_landmarks=True,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
 
-        # si no captura un frame se rompe el ciclo
-        if not ret:
-            break
+# Índices de los landmarks para los ojos
+LEFT_EYE = [362, 385, 387, 263, 373, 380]
+RIGHT_EYE = [33, 160, 158, 133, 153, 144]
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+# Configuración
+ALERT_THRESHOLD = 2.0  # Segundos para activar la alerta inicial
+DANGER_THRESHOLD = 3.0  # Segundos para alerta crítica
+EYE_AR_THRESH = 0.2  # Umbral para determinar si el ojo está cerrado
+MAX_FRAME_SIZE = 1024 * 1024  # 1MB máximo por frame
 
-        faces = face_detection.detectMultiScale(
-            gray,
-            minNeighbors=5,
-            scaleFactor=1.1,
-            minSize=(25, 25)
-        )
-        left_eye = eyes_left_detection.detectMultiScale(gray)
-        right_eye = eyes_right_detection.detectMultiScale(gray)
-
+def calculate_ear(eye_points):
+    """Calcula el Eye Aspect Ratio (EAR)"""
+    try:
+        # Convertir landmarks a coordenadas numéricas
+        points = [(point.x, point.y) for point in eye_points]
         
-        # dibuja un rectangulo en la cara
-        #for (x, y, w, h) in faces:
-        #    cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
-        #    roi_color = frame[y:y+h, x:x+w]
-        #    face_img = cv2.resize(frame, (64, 64))
-        #    face_img = face_img.astype('float')/255.0
-        #    face_img = np.expand_dims(face_img, axis=0)
-
-        #    prediction = model.predict(face_img)
-        #    yawn_prob = np.argmax(prediction, axis=1)
-
-        #    print(prediction)
-
+        # Calcular distancias verticales
+        v1 = np.linalg.norm(np.array(points[1]) - np.array(points[5]))
+        v2 = np.linalg.norm(np.array(points[2]) - np.array(points[4]))
         
+        # Calcular distancia horizontal
+        h = np.linalg.norm(np.array(points[0]) - np.array(points[3]))
         
+        # Calcular EAR
+        ear = (v1 + v2) / (2.0 * h)
+        return float(ear)
+    except Exception as e:
+        logger.error(f"Error calculando EAR: {e}")
+        return 0.3  # Valor por defecto que indica ojos abiertos
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[WebSocket, dict] = {}
+    
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections[websocket] = {
+            'closed_eyes_start_time': None,
+            'last_frame_time': time.time(),
+            'alert_level': 0,
+            'critical_alert_active': False  # Solo para alertas críticas
+        }
+        logger.info("Nueva conexión establecida")
+    
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            del self.active_connections[websocket]
+            logger.info("Conexión cerrada")
+
+manager = ConnectionManager()
+
+@app.websocket("/video_stream")
+async def video_stream(websocket: WebSocket):
+    await manager.connect(websocket)
+    
+    try:
+        while True:
+            message = await websocket.receive()
+            
+            if message.get("bytes") and len(message["bytes"]) == 1:
+                command = message["bytes"][0]
+                if command == 0:  # Reset completo
+                    connection_data = manager.active_connections[websocket]
+                    connection_data['closed_eyes_start_time'] = None
+                    connection_data['alert_level'] = 0
+                    connection_data['critical_alert_active'] = False
+                    logger.info("Estado completamente reiniciado por señal del cliente")
+                    
+                    # Enviar confirmación de reinicio al cliente
+                    reset_confirm = {
+                        "type": "reset_confirm",
+                        "message": "Estado reiniciado"
+                    }
+                    await websocket.send_text(json.dumps(reset_confirm))
+                continue
+            
+            # Procesar frame normal
+            if "bytes" in message:
+                frame_data = message["bytes"]
+                
+                # Verificar tamaño máximo
+                if len(frame_data) > MAX_FRAME_SIZE:
+                    logger.warning("Frame demasiado grande recibido")
+                    continue
+                    
+                # Procesar frame
+                processed_frame, alert = await process_frame(
+                    frame_data, 
+                    manager.active_connections[websocket]
+                )
+                
+                # Enviar frame procesado
+                await websocket.send_bytes(processed_frame)
+                
+                # Enviar alerta si es necesario
+                if alert:
+                    alert_json = json.dumps(alert)
+                    logger.info(f"Enviando alerta: {alert_json}")
+                    await websocket.send_text(alert_json)
+                
+                # Actualizar timestamp
+                manager.active_connections[websocket]['last_frame_time'] = time.time()
+            
+    except WebSocketDisconnect:
+        logger.info("Cliente desconectado normalmente")
+    except Exception as e:
+        logger.error(f"Error en la conexión: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+    finally:
+        manager.disconnect(websocket)
+
+async def process_frame(frame_data: bytes, connection_data: dict) -> Tuple[bytes, Optional[dict]]:
+    """Procesa el frame recibido y devuelve el frame procesado junto con cualquier alerta."""
+    try:
+        # Decodificar frame
+        nparr = np.frombuffer(frame_data, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError("No se pudo decodificar el frame")
+
+        # Convertir a RGB para MediaPipe
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = face_mesh.process(rgb_frame)
         
-        # dibujar rectangulo en el ojo derecho
-        for (x, y, w, h) in right_eye:
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-
-            roi_color = frame[y:y+h, x:x+w]
-            eye_img = cv2.resize(roi_color, (64, 64))
-            eye_img = eye_img.astype('float')/255.0
-            eye_img = np.expand_dims(eye_img, axis=0)
-
-            prediction = model.predict(eye_img)
-            prob = prediction[0]
-            eye_claa = np.argmax(prob)
-
-            if eye_claa == 0:
-                status = 'Open'
-                cv2.putText(frame, status, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
-            elif eye_claa == 1:
-                status = 'Closed'  
-                cv2.putText(frame, status, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
-            print(eye_claa)
-        # dibujar rectangulo en el ojo izquierdo
-        #for (x, y, w, h) in left_eye:
-        #    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 2)
+        height, width = frame.shape[:2]
+        alert_info = None
         
-        # lo plasma en la pantalla
-        cv2.imshow('frame', frame)
+        if results.multi_face_landmarks:
+            for face_landmarks in results.multi_face_landmarks:
+                # Obtener puntos de los ojos
+                left_eye_points = [face_landmarks.landmark[i] for i in LEFT_EYE]
+                right_eye_points = [face_landmarks.landmark[i] for i in RIGHT_EYE]
+                
+                # Calcular EAR para ambos ojos
+                left_ear = calculate_ear(left_eye_points)
+                right_ear = calculate_ear(right_eye_points)
+                avg_ear = (left_ear + right_ear) / 2
+                
+                # Dibujar EAR en el frame
+                cv2.putText(frame, f"EAR: {avg_ear:.2f}", (10, 30),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                
+                # Lógica de detección de somnolencia
+                if avg_ear < EYE_AR_THRESH:
+                    if connection_data['closed_eyes_start_time'] is None:
+                        connection_data['closed_eyes_start_time'] = time.time()
+                    
+                    elapsed_time = time.time() - connection_data['closed_eyes_start_time']
+                    
+                    cv2.putText(frame, f"Tiempo: {elapsed_time:.1f}s", (10, 60),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
+                               (0, 0, 255) if elapsed_time > ALERT_THRESHOLD else (0, 255, 0), 2)
+                    
+                    if elapsed_time > DANGER_THRESHOLD and not connection_data['critical_alert_active']:
+                        alert_info = {
+                            "level": 2,
+                            "message": "¡PELIGRO! Somnolencia crítica detectada",
+                            "elapsed_time": elapsed_time
+                        }
+                        connection_data['critical_alert_active'] = True
+                        connection_data['alert_level'] = 2
+                        cv2.rectangle(frame, (0, 0), (width, height), (0, 0, 255), 10)
+                    
+                    elif elapsed_time > ALERT_THRESHOLD and not connection_data['critical_alert_active']:
+                        alert_info = {
+                            "level": 1,
+                            "message": "Advertencia: Signos de somnolencia",
+                            "elapsed_time": elapsed_time
+                        }
+                        cv2.rectangle(frame, (0, 0), (width, height), (0, 255, 255), 5)
+                else:
+                    connection_data['closed_eyes_start_time'] = None
+                    if connection_data.get('alert_level', 0) == 1:
+                        connection_data['alert_level'] = 0
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-finally:
-    captura.release()
-    cv2.destroyAllWindows()
+        # Codificar frame procesado
+        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return buffer.tobytes(), alert_info
+
+    except Exception as e:
+        logging.error(f"Error procesando frame: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
+        return frame_data, None
