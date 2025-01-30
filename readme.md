@@ -1,83 +1,97 @@
-# Sistema de Detección de Somnolencia
+# 🚀 Sistema de Detección de Somnolencia 👀
 
-Este sistema utiliza visión por computadora para detectar signos de somnolencia a través de la webcam, monitoreando el estado de los ojos del usuario.
+## 📝 Descripción
+Sistema de detección de somnolencia en tiempo real mediante análisis de video y machine learning. ¡Mantente alerta y seguro! 🚨
 
-## Requisitos Previos
+---
 
-- Python 3.8 o superior
-- Webcam funcional
-- Conexión a Internet (para la instalación inicial)
+## ✨ Características
+- 👤 **Detección de rostros en tiempo real**
+- 👁️ **Análisis del estado de los ojos**
+- ⚠️ **Alertas de somnolencia**
+- 📄 **API REST documentada**
+- 📡 **WebSocket para streaming de video**
 
-## Instalación
+---
 
-1. Clonar el repositorio:
+## 📋 Requisitos
+Asegúrate de tener instalados los siguientes paquetes y dependencias:
 
-```bash
-git clone https://github.com/tu-usuario/sleep_detection.git
-cd sleep_detection
-```
+- 🐍 **Python 3.8+**
+- 🖼️ **OpenCV**
+- 🧠 **TensorFlow**
+- 🚀 **FastAPI**
+- ✋ **MediaPipe**
 
-2. Crear un entorno virtual y entrar en el  (recomendado):
+---
 
-```bash
-python -m venv venv
-# En Windows
-venv\Scripts\activate
-# En Linux/Mac
-source venv/bin/activate
-```
-
-```bash
-source venv/Scripts/activate
-```
-
-//Para desactivar:
-
-```bash
-deactivate
-```
-
-3. Instalar las dependencias:
+## 🛠️ Instalación
+Ejecuta el siguiente comando para instalar todas las dependencias necesarias:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Ejecución
+---
 
-4. Iniciar el servidor:
+## 🚦 Uso
+Para iniciar el servidor, ejecuta:
 
 ```bash
-uvicorn modelo:app --reload
+uvicorn app:app --reload
 ```
 
-5. Acceder al cliente y ejecutar.
+Accede a la documentación interactiva:
+- 📚 **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- 📖 **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 
-## Características
+---
 
-- Detección en tiempo real del estado de los ojos
-- Alertas visuales y sonoras cuando se detecta somnolencia
-- Interfaz web accesible desde cualquier navegador
-- Sistema de alertas por niveles:
-  - Nivel 1: Advertencia inicial (ojos cerrados por más de 2 segundos)
-  - Nivel 2: Alerta crítica (ojos cerrados por más de 3 segundos)
+## 🏗️ Arquitectura
+El sistema está compuesto por los siguientes módulos:
 
-## Notas de Uso
+- **`app.py`**: API principal y endpoints REST 🛠️
+- **`modelo.py`**: Procesamiento de video y WebSocket 🎥
+- **`eye_analyzer.py`**: Análisis de ojos y detección de somnolencia 👁️
+- **`config.py`**: Configuración centralizada ⚙️
+- **`connection_handler.py`**: Gestión de conexiones WebSocket 📡
 
-- Asegúrese de tener buena iluminación
-- Mantenga una distancia apropiada de la cámara
-- El sistema funciona mejor cuando se usa de frente a la cámara
-- Para reiniciar las alertas, use el botón de reset en la interfaz
+---
 
-## Solución de Problemas
+## 🌐 API
 
-Si encuentra algún problema:
+### REST Endpoints
+- **POST** `/api/detect_drowsiness_live`: Analiza un frame de video 🖼️
 
-1. Verifique que la webcam esté correctamente conectada
-2. Asegúrese de que ninguna otra aplicación esté usando la webcam
-3. Reinicie el servidor si la conexión se vuelve inestable
-4. Verifique que todos los requisitos estén instalados correctamente
+### WebSocket
+- `/video_stream`: Streaming de video en tiempo real 📹
 
-## Licencia
+---
 
-MIT
+## 🤝 Contribuir
+¡Tu contribución es bienvenida! Sigue estos pasos:
+
+1. 🍴 **Haz un fork** del repositorio
+2. 🌿 **Crea una rama feature**
+   ```bash
+   git checkout -b feature/nueva-caracteristica
+   ```
+3. 💾 **Haz commit de tus cambios**
+   ```bash
+   git commit -am 'Agregar nueva característica'
+   ```
+4. 🚀 **Sube la rama**
+   ```bash
+   git push origin feature/nueva-caracteristica
+   ```
+5. 📤 **Crea un Pull Request**
+
+---
+
+## 📜 Licencia
+Este proyecto está bajo la licencia **MIT**.
+
+---
+
+© 2025 - Sistema de Detección de Somnolencia
+
